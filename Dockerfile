@@ -1,4 +1,4 @@
-FROM lukemathwalker/cargo-chef:latest-rust-1.56.0 AS chef
+FROM lukemathwalker/cargo-chef:latest-rust-1.62-alpine3.16 AS chef
 WORKDIR app
 
 FROM chef AS planner
@@ -17,4 +17,5 @@ RUN cargo build --release --bin centarr
 FROM debian:buster-slim AS runtime
 WORKDIR app
 COPY --from=builder /app/target/release/centarr /usr/local/bin
+EXPOSE 3000
 ENTRYPOINT ["/usr/local/bin/centarr"]
