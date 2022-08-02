@@ -1,24 +1,21 @@
 use axum::{
     body::Body,
     extract::Path,
-    http::StatusCode,
+    http::{HeaderMap, Response},
     response::IntoResponse,
-    routing::{get, get_service},
+    routing::get,
     Json, Router,
 };
 use errors::ApiError;
+
+use regex::Regex;
 use reqwest::RequestBuilder;
 use serde::{Deserialize, Serialize};
-use std::{env, path::PathBuf};
-use std::{io, net::SocketAddr};
-use tower::util::ServiceExt;
-use tower_http::{
-    services::{ServeDir, ServeFile},
-    trace::TraceLayer,
-};
+use std::net::SocketAddr;
+use std::{env, os::unix::prelude::FileExt, path::PathBuf};
+use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 mod errors;
-use axum::http::Request;
 
 #[tokio::main]
 async fn main() {
@@ -45,7 +42,6 @@ async fn main() {
             "/shows/:showId/episodes/:episodeId/watch",
             get(get_episode_and_watch),
         )
-        .fallback(get_service(ServeDir::new(".")).handle_error(handle_error))
         .layer(TraceLayer::new_for_http());
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
@@ -201,7 +197,12 @@ async fn get_episode(Path(ids): Path<(i32, i32)>) -> Result<Json<Episode>, ApiEr
     return Ok(Json(episode));
 }
 
-async fn get_episode_and_watch(Path(ids): Path<(i32, i32)>) -> Result<impl IntoResponse, ApiError> {
+static CHUNK_SIZE: u64 = 300_000_0;
+
+async fn get_episode_and_watch(
+    Path(ids): Path<(i32, i32)>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, ApiError> {
     let body = sonarr_client(format!("/episode/{}?seriesId={}", ids.1, ids.0).as_str())
         .send()
         .await
@@ -216,24 +217,57 @@ async fn get_episode_and_watch(Path(ids): Path<(i32, i32)>) -> Result<impl IntoR
         let mut path = PathBuf::from(file.path.clone());
 
         if let Ok(prefix) = env::var("SONARR_DISK_PATH_PREFIX") {
-            println!("here! {}", prefix);
             path = PathBuf::from(prefix).join(format!(".{}", file.path));
         }
 
-        tracing::debug!("Opening file: {:?}", path);
-        let svc = ServeFile::new(path);
-        let res = svc.oneshot(Request::new(Body::empty())).await.unwrap();
+        let file = std::fs::File::open(path).unwrap();
+        let metadata = file.metadata().unwrap();
 
-        if res.status().is_success() {
-            return Ok(res);
+        let range = headers.get(axum::http::header::RANGE);
+
+        let mut start_index = 0;
+        let mut end_index: u64 = 0;
+
+        if let Some(range) = range {
+            let re = Regex::new(r"bytes=(\d+)-(\d+)?").unwrap();
+            let captures = re.captures(range.to_str().unwrap()).unwrap();
+            let start = captures.get(1).unwrap().as_str();
+            start_index = start.parse::<u64>().unwrap();
+
+            if let Some(end) = captures.get(2) {
+                end_index = end.as_str().parse::<u64>().unwrap();
+            }
         }
 
-        return Err(ApiError::new(500, "Couldn't find file on disk"));
+        if start_index == 0 && end_index == 0 {
+            end_index = std::cmp::min(metadata.len(), start_index + CHUNK_SIZE);
+        }
+
+        if start_index != 0 && end_index == 0 {
+            end_index = std::cmp::min(metadata.len(), start_index + CHUNK_SIZE);
+        }
+
+        let read_amount = end_index - start_index;
+        let mut buf: Vec<u8> = vec![0; read_amount as usize];
+
+        let bytes_read = file.read_at(&mut buf, start_index).unwrap();
+        println!("bytes_read: {:?}", bytes_read);
+
+        let res = Response::builder()
+            .status(206)
+            .header("Accept-Ranges", "Bytes")
+            .header("Content-Type", "video/webm")
+            .header(
+                "Content-Range",
+                format!("bytes {}-{}/{}", start_index, end_index, metadata.len()),
+            )
+            .body(Body::from(buf))
+            .unwrap();
+
+        return Ok(res);
+
+        // return Err(ApiError::new(500, "Couldn't find file on disk"));
     }
 
     Err(ApiError::new(400, "Episode not found"))
-}
-
-async fn handle_error(_err: io::Error) -> impl IntoResponse {
-    (StatusCode::INTERNAL_SERVER_ERROR, "Something went wrong...")
 }
