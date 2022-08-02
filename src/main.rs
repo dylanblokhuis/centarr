@@ -197,7 +197,7 @@ async fn get_episode(Path(ids): Path<(i32, i32)>) -> Result<Json<Episode>, ApiEr
     return Ok(Json(episode));
 }
 
-static CHUNK_SIZE: u64 = 300_000_0;
+// static CHUNK_SIZE: u64 = 300_000_0;
 
 async fn get_episode_and_watch(
     Path(ids): Path<(i32, i32)>,
@@ -240,11 +240,11 @@ async fn get_episode_and_watch(
         }
 
         if start_index == 0 && end_index == 0 {
-            end_index = std::cmp::min(metadata.len(), start_index + CHUNK_SIZE);
+            end_index = metadata.len();
         }
 
         if start_index != 0 && end_index == 0 {
-            end_index = std::cmp::min(metadata.len(), start_index + CHUNK_SIZE);
+            end_index = metadata.len();
         }
 
         let read_amount = end_index - start_index;
@@ -255,18 +255,14 @@ async fn get_episode_and_watch(
 
         let res = Response::builder()
             .status(206)
-            .header("Accept-Ranges", "Bytes")
-            .header("Content-Type", "video/webm")
             .header(
                 "Content-Range",
                 format!("bytes {}-{}/{}", start_index, end_index, metadata.len()),
             )
-            .body(Body::from(buf))
-            .unwrap();
+            .header("Accept-Ranges", "Bytes")
+            .header("Content-Type", "video/webm");
 
-        return Ok(res);
-
-        // return Err(ApiError::new(500, "Couldn't find file on disk"));
+        return Ok(res.body(Body::from(buf)).unwrap());
     }
 
     Err(ApiError::new(400, "Episode not found"))
