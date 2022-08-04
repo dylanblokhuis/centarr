@@ -11,8 +11,16 @@ use errors::ApiError;
 use regex::Regex;
 use reqwest::RequestBuilder;
 use serde::{Deserialize, Serialize};
-use std::net::SocketAddr;
-use std::{env, os::unix::prelude::FileExt, path::PathBuf};
+use std::{
+    env,
+    fs::File,
+    os::unix::prelude::FileExt,
+    path::PathBuf,
+    pin::Pin,
+    task::{Context, Poll},
+};
+use std::{io::Error, net::SocketAddr};
+use tokio_stream::Stream;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 mod errors;
@@ -197,7 +205,32 @@ async fn get_episode(Path(ids): Path<(i32, i32)>) -> Result<Json<Episode>, ApiEr
     return Ok(Json(episode));
 }
 
-// static CHUNK_SIZE: u64 = 300_000_0;
+static CHUNK_SIZE: usize = 65536;
+
+struct FileStream {
+    file: File,
+    read_until: usize,
+    bytes_read: usize,
+}
+
+impl Stream for FileStream {
+    type Item = Result<Vec<u8>, Error>;
+
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<std::option::Option<Result<Vec<u8>, std::io::Error>>> {
+        let chunk_size = std::cmp::min(CHUNK_SIZE, self.read_until - self.bytes_read);
+        let mut buf: Vec<u8> = vec![0; chunk_size];
+        self.bytes_read += self.file.read_at(&mut buf, self.bytes_read as u64).unwrap();
+
+        return Poll::Ready(Some(Ok(buf)));
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.bytes_read, Some(self.read_until))
+    }
+}
 
 async fn get_episode_and_watch(
     Path(ids): Path<(i32, i32)>,
@@ -220,10 +253,12 @@ async fn get_episode_and_watch(
             path = PathBuf::from(prefix).join(format!(".{}", file.path));
         }
 
+        tracing::debug!("Opening {}", path.display());
         let file = std::fs::File::open(path).unwrap();
         let metadata = file.metadata().unwrap();
-
         let range = headers.get(axum::http::header::RANGE);
+
+        // println!("range: {:?}", range);
 
         let mut start_index = 0;
         let mut end_index: u64 = 0;
@@ -248,10 +283,13 @@ async fn get_episode_and_watch(
         }
 
         let read_amount = end_index - start_index;
-        let mut buf: Vec<u8> = vec![0; read_amount as usize];
 
-        let bytes_read = file.read_at(&mut buf, start_index).unwrap();
-        println!("bytes_read: {:?}", bytes_read);
+        // println!("read_amount: {}", read_amount);
+        let file_stream = FileStream {
+            file: file,
+            read_until: read_amount as usize,
+            bytes_read: 0,
+        };
 
         let res = Response::builder()
             .status(206)
@@ -259,10 +297,13 @@ async fn get_episode_and_watch(
                 "Content-Range",
                 format!("bytes {}-{}/{}", start_index, end_index, metadata.len()),
             )
+            .header("Content-Length", read_amount)
             .header("Accept-Ranges", "Bytes")
-            .header("Content-Type", "video/webm");
+            .header("Content-Type", "video/webm")
+            .body(Body::wrap_stream(file_stream))
+            .unwrap();
 
-        return Ok(res.body(Body::from(buf)).unwrap());
+        return Ok(res);
     }
 
     Err(ApiError::new(400, "Episode not found"))
