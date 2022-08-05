@@ -50,10 +50,18 @@ async fn main() {
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
     tracing::debug!("listening on http://{}", addr);
+
     axum::Server::bind(&addr)
         .serve(app.into_make_service())
+        .with_graceful_shutdown(shutdown_signal())
         .await
         .unwrap();
+}
+
+async fn shutdown_signal() {
+    tokio::signal::ctrl_c()
+        .await
+        .expect("Expect shutdown signal handler");
 }
 
 fn sonarr_url(path: &str) -> String {
@@ -204,7 +212,7 @@ async fn get_episode(Path(ids): Path<(i32, i32)>) -> Result<Json<Episode>, ApiEr
 static CHUNK_SIZE: usize = 65536;
 
 struct FileStream {
-    file: File,
+    path: PathBuf,
     read_until: usize,
     bytes_read: usize,
 }
@@ -224,7 +232,9 @@ impl Stream for FileStream {
         let chunk_size = std::cmp::min(CHUNK_SIZE, self.read_until - self.bytes_read);
         // println!("chunk_size: {}", chunk_size);
         let mut buf: Vec<u8> = vec![0; chunk_size];
-        self.bytes_read += self.file.read_at(&mut buf, self.bytes_read as u64).unwrap();
+        let file = File::open(self.path.clone()).unwrap();
+        self.bytes_read += file.read_at(&mut buf, self.bytes_read as u64).unwrap();
+        std::mem::drop(file);
 
         return Poll::Ready(Some(Ok(buf)));
     }
@@ -263,8 +273,9 @@ async fn get_episode_and_watch(
         }
 
         tracing::debug!("Opening {}", path.display());
-        let file = std::fs::File::open(path).unwrap();
+        let file = std::fs::File::open(path.clone()).unwrap();
         let metadata = file.metadata().unwrap();
+        std::mem::drop(file);
         let range = headers.get(axum::http::header::RANGE);
 
         tracing::debug!("range: {:?}", range);
@@ -293,9 +304,8 @@ async fn get_episode_and_watch(
 
         let read_amount = end_index - start_index;
 
-        // println!("read_amount: {}", read_amount);
         let file_stream = FileStream {
-            file: file,
+            path: path,
             read_until: end_index as usize,
             bytes_read: start_index as usize,
         };
