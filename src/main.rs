@@ -1,5 +1,5 @@
 use axum::{
-    body::Body,
+    body::{Body, Bytes},
     extract::Path,
     http::{HeaderMap, Response},
     response::IntoResponse,
@@ -218,36 +218,31 @@ struct FileStream {
 }
 
 impl Stream for FileStream {
-    type Item = Result<Vec<u8>, Error>;
+    type Item = Result<Bytes, Error>;
 
     fn poll_next(
         mut self: Pin<&mut Self>,
         _cx: &mut Context<'_>,
-    ) -> Poll<std::option::Option<Result<Vec<u8>, std::io::Error>>> {
+    ) -> Poll<std::option::Option<Result<Bytes, std::io::Error>>> {
         // println!(
         //     "read_until {} bytes_read: {} ",
         //     self.read_until, self.bytes_read
         // );
+        if self.bytes_read == self.read_until {
+            return Poll::Ready(std::option::Option::None);
+        }
 
         let chunk_size = std::cmp::min(CHUNK_SIZE, self.read_until - self.bytes_read);
         // println!("chunk_size: {}", chunk_size);
-        let mut buf: Vec<u8> = vec![0; chunk_size];
+        let mut buf = vec![0; chunk_size];
         let file = File::open(self.path.clone()).unwrap();
         self.bytes_read += file.read_at(&mut buf, self.bytes_read as u64).unwrap();
-        std::mem::drop(file);
 
-        return Poll::Ready(Some(Ok(buf)));
+        return Poll::Ready(Some(Ok(Bytes::from(buf))));
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
         (self.bytes_read, Some(self.read_until))
-    }
-}
-
-impl Drop for FileStream {
-    fn drop(&mut self) {
-        std::mem::drop(self.bytes_read);
-        std::mem::drop(self.read_until);
     }
 }
 
@@ -304,12 +299,6 @@ async fn get_episode_and_watch(
 
         let read_amount = end_index - start_index;
 
-        let file_stream = FileStream {
-            path: path,
-            read_until: end_index as usize,
-            bytes_read: start_index as usize,
-        };
-
         let res = Response::builder()
             .status(206)
             .header(
@@ -319,7 +308,11 @@ async fn get_episode_and_watch(
             .header("Content-Length", read_amount)
             .header("Accept-Ranges", "Bytes")
             .header("Content-Type", "video/webm")
-            .body(Body::wrap_stream(file_stream))
+            .body(Body::wrap_stream(FileStream {
+                path: path,
+                read_until: end_index as usize,
+                bytes_read: start_index as usize,
+            }))
             .unwrap();
 
         return Ok(res);
