@@ -18,10 +18,11 @@ use std::{
     path::PathBuf,
     pin::Pin,
     task::{Context, Poll},
+    time::Duration,
 };
 use std::{io::Error, net::SocketAddr};
 use tokio_stream::Stream;
-use tower_http::trace::TraceLayer;
+use tower_http::{timeout::TimeoutLayer, trace::TraceLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 mod errors;
 
@@ -44,6 +45,7 @@ async fn main() {
             "/shows/:showId/episodes/:episodeId/watch",
             get(get_episode_and_watch),
         )
+        .layer(TimeoutLayer::new(Duration::from_secs(10)))
         .layer(TraceLayer::new_for_http());
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
