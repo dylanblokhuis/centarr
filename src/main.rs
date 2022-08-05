@@ -34,12 +34,6 @@ async fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    // `SpaRouter` is the easiest way to serve assets at a nested route like `/assets`
-    // let app = Router::new()
-    //     .route("/foo", get(|| async { "Hi from /foo" }))
-    //     .merge(axum_extra::routing::SpaRouter::new("/assets", "."))
-    //     .layer(TraceLayer::new_for_http());
-
     // for serving assets directly at the root you can use `tower_http::services::ServeDir`
     // as the fallback to a `Router`
     let app: _ = Router::new()
@@ -235,6 +229,13 @@ impl Stream for FileStream {
 
     fn size_hint(&self) -> (usize, Option<usize>) {
         (self.bytes_read, Some(self.read_until))
+    }
+}
+
+impl Drop for FileStream {
+    fn drop(&mut self) {
+        std::mem::drop(self.bytes_read);
+        std::mem::drop(self.read_until);
     }
 }
 
