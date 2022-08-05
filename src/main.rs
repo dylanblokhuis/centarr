@@ -1,28 +1,11 @@
-use axum::{
-    body::{Body, Bytes},
-    extract::Path,
-    http::{HeaderMap, Response},
-    response::IntoResponse,
-    routing::get,
-    Json, Router,
-};
+use axum::{extract::Path, http::HeaderMap, response::IntoResponse, routing::get, Json, Router};
 use errors::ApiError;
 
-use regex::Regex;
 use reqwest::RequestBuilder;
 use serde::{Deserialize, Serialize};
-use std::{
-    env,
-    fs::File,
-    os::unix::prelude::FileExt,
-    path::PathBuf,
-    pin::Pin,
-    task::{Context, Poll},
-    time::Duration,
-};
-use std::{io::Error, net::SocketAddr};
-use tokio_stream::Stream;
-use tower_http::{timeout::TimeoutLayer, trace::TraceLayer};
+use std::env;
+use std::{net::SocketAddr, path::PathBuf};
+use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 mod errors;
 
@@ -45,7 +28,6 @@ async fn main() {
             "/shows/:showId/episodes/:episodeId/watch",
             get(get_episode_and_watch),
         )
-        .layer(TimeoutLayer::new(Duration::from_secs(10)))
         .layer(TraceLayer::new_for_http());
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
@@ -211,41 +193,6 @@ async fn get_episode(Path(ids): Path<(i32, i32)>) -> Result<Json<Episode>, ApiEr
 
 static CHUNK_SIZE: usize = 65536;
 
-struct FileStream {
-    path: PathBuf,
-    read_until: usize,
-    bytes_read: usize,
-}
-
-impl Stream for FileStream {
-    type Item = Result<Bytes, Error>;
-
-    fn poll_next(
-        mut self: Pin<&mut Self>,
-        _cx: &mut Context<'_>,
-    ) -> Poll<std::option::Option<Result<Bytes, std::io::Error>>> {
-        // println!(
-        //     "read_until {} bytes_read: {} ",
-        //     self.read_until, self.bytes_read
-        // );
-        if self.bytes_read == self.read_until {
-            return Poll::Ready(std::option::Option::None);
-        }
-
-        let chunk_size = std::cmp::min(CHUNK_SIZE, self.read_until - self.bytes_read);
-        // println!("chunk_size: {}", chunk_size);
-        let mut buf = vec![0; chunk_size];
-        let file = File::open(self.path.clone()).unwrap();
-        self.bytes_read += file.read_at(&mut buf, self.bytes_read as u64).unwrap();
-
-        return Poll::Ready(Some(Ok(Bytes::from(buf))));
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        (self.bytes_read, Some(self.read_until))
-    }
-}
-
 async fn get_episode_and_watch(
     Path(ids): Path<(i32, i32)>,
     headers: HeaderMap,
@@ -267,60 +214,8 @@ async fn get_episode_and_watch(
             path = PathBuf::from(prefix).join(format!(".{}", file.path));
         }
 
-        // tracing::debug!("Opening {}", path.display());
-        // let file = std::fs::File::open(path.clone()).unwrap();
-        // let metadata = file.metadata().unwrap();
-        // std::mem::drop(file);
-        // let range = headers.get(axum::http::header::RANGE);
-
-        // tracing::debug!("range: {:?}", range);
-
-        // let mut start_index = 0;
-        // let mut end_index: u64 = 0;
-
-        // if let Some(range) = range {
-        //     let re = Regex::new(r"bytes=(\d+)-(\d+)?").unwrap();
-        //     let captures = re.captures(range.to_str().unwrap()).unwrap();
-        //     let start = captures.get(1).unwrap().as_str();
-        //     start_index = start.parse::<u64>().unwrap();
-
-        //     if let Some(end) = captures.get(2) {
-        //         end_index = end.as_str().parse::<u64>().unwrap();
-        //     }
-        // }
-
-        // if start_index == 0 && end_index == 0 {
-        //     end_index = metadata.len();
-        // }
-
-        // if start_index != 0 && end_index == 0 {
-        //     end_index = metadata.len();
-        // }
-
-        // let read_amount = end_index - start_index;
-
-        // let body = Body::wrap_stream(FileStream {
-        //     path: path.clone(),
-        //     read_until: end_index as usize,
-        //     bytes_read: start_index as usize,
-        // });
-
-        let yo = hyper_static::serve::static_file(path.as_path(), None, &headers, CHUNK_SIZE);
-        let res = yo.await.unwrap().unwrap();
-        return Ok(res);
-        // let res = Response::builder()
-        //     .status(206)
-        //     .header(
-        //         "Content-Range",
-        //         format!("bytes {}-{}/{}", start_index, end_index, metadata.len()),
-        //     )
-        //     .header("Content-Length", read_amount)
-        //     .header("Accept-Ranges", "Bytes")
-        //     .header("Content-Type", "video/webm")
-        //     .body(body)
-        //     .unwrap();
-
-        // return Ok(res);
+        let file = hyper_static::serve::static_file(path.as_path(), None, &headers, CHUNK_SIZE);
+        return Ok(file.await.unwrap().unwrap());
     }
 
     Err(ApiError::new(400, "Episode not found"))
