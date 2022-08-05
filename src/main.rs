@@ -220,7 +220,13 @@ impl Stream for FileStream {
         mut self: Pin<&mut Self>,
         _cx: &mut Context<'_>,
     ) -> Poll<std::option::Option<Result<Vec<u8>, std::io::Error>>> {
+        // println!(
+        //     "read_until {} bytes_read: {} ",
+        //     self.read_until, self.bytes_read
+        // );
+
         let chunk_size = std::cmp::min(CHUNK_SIZE, self.read_until - self.bytes_read);
+        // println!("chunk_size: {}", chunk_size);
         let mut buf: Vec<u8> = vec![0; chunk_size];
         self.bytes_read += self.file.read_at(&mut buf, self.bytes_read as u64).unwrap();
 
@@ -258,7 +264,7 @@ async fn get_episode_and_watch(
         let metadata = file.metadata().unwrap();
         let range = headers.get(axum::http::header::RANGE);
 
-        // println!("range: {:?}", range);
+        tracing::debug!("range: {:?}", range);
 
         let mut start_index = 0;
         let mut end_index: u64 = 0;
@@ -287,8 +293,8 @@ async fn get_episode_and_watch(
         // println!("read_amount: {}", read_amount);
         let file_stream = FileStream {
             file: file,
-            read_until: read_amount as usize,
-            bytes_read: 0,
+            read_until: end_index as usize,
+            bytes_read: start_index as usize,
         };
 
         let res = Response::builder()
