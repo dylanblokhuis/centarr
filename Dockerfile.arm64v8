@@ -1,13 +1,30 @@
-FROM rust:1.62.1
+FROM rust:1.62.1-alpine as builder
 
-RUN apt-get update && apt-get install build-essential -y
+# Adding necessary packages
+RUN apk update
+RUN apk add pkgconfig openssl openssl-dev musl-dev build-base
 
-WORKDIR app
+RUN rustup target add aarch64-unknown-linux-musl
+RUN rustup toolchain install stable-aarch64-unknown-linux-musl
+# Set working directory in container; make directory if not exists
+RUN mkdir -p /usr/src/centarr
+WORKDIR /usr/src/centarr
 
-COPY . .
+# Copy all files from local computer to container
+COPY Cargo.toml .
+COPY Cargo.lock .
+COPY src src
 
-RUN cargo build --release
+# Build release application
+RUN cargo build --target aarch64-unknown-linux-musl --release
+
+# STAGE 2 is to have smallest image possible by including only necessary binary
+# Use smallest base image
+FROM shinsenter/scratch
+
+# Copy application binary from STAGE 1 image to STAGE 2 image
+COPY --from=builder /usr/src/centarr/target/aarch64-unknown-linux-musl/release/centarr /
 
 EXPOSE 3000
 
-CMD ["/app/target/release/centarr"]
+ENTRYPOINT ["/centarr"]
