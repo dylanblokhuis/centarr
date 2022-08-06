@@ -1,7 +1,5 @@
 FROM rust:1.62
 
-RUN apt-get install gcc
-
 WORKDIR app
 
 COPY . .
