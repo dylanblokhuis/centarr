@@ -18,8 +18,6 @@ async fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    // for serving assets directly at the root you can use `tower_http::services::ServeDir`
-    // as the fallback to a `Router`
     let app: _ = Router::new()
         .route("/shows", get(get_shows))
         .route("/shows/:showId", get(get_show))
@@ -193,10 +191,10 @@ async fn get_episode_and_watch(
     let body = sonarr_client(format!("/episode/{}?seriesId={}", ids.1, ids.0).as_str())
         .send()
         .await
-        .map_err(|e| ApiError::empty(500, Some(e.to_string())))?
+        .map_err(|e| ApiError::new(500, e.to_string()))?
         .text()
         .await
-        .map_err(|e| ApiError::empty(500, Some(e.to_string())))?;
+        .map_err(|e| ApiError::new(500, e.to_string()))?;
 
     let episode = serde_json::from_str::<Episode>(&body).unwrap();
 
@@ -208,8 +206,11 @@ async fn get_episode_and_watch(
         }
 
         let file = hyper_static::serve::static_file(path.as_path(), None, &headers, CHUNK_SIZE);
-        return Ok(file.await.unwrap().unwrap());
+        return Ok(file
+            .await
+            .map_err(|e| ApiError::new(500, e.to_string()))?
+            .map_err(|e| ApiError::new(500, e.to_string()))?);
     }
 
-    Err(ApiError::new(400, "Episode not found"))
+    Err(ApiError::new(400, "Episode not found".into()))
 }

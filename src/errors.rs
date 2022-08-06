@@ -4,13 +4,14 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
+#[derive(Debug)]
 pub struct ApiError {
     status_code: StatusCode,
-    message: Option<&'static str>,
+    message: Option<String>,
 }
 
 impl ApiError {
-    pub fn new(status_code: u16, message: &'static str) -> Self {
+    pub fn new(status_code: u16, message: String) -> Self {
         Self {
             status_code: StatusCode::from_u16(status_code)
                 .expect("Status Code used that doesn't exist"),
@@ -18,8 +19,8 @@ impl ApiError {
         }
     }
 
-    pub fn empty(status_code: u16, error: Option<String>) -> Self {
-        println!("{:?}", error);
+    pub fn empty(status_code: u16, log: Option<String>) -> Self {
+        println!("{:?}", log);
         Self {
             status_code: StatusCode::from_u16(status_code)
                 .expect("Status Code used that doesn't exist"),
