@@ -35,15 +35,8 @@ async fn main() {
 
     axum::Server::bind(&addr)
         .serve(app.into_make_service())
-        .with_graceful_shutdown(shutdown_signal())
         .await
         .unwrap();
-}
-
-async fn shutdown_signal() {
-    tokio::signal::ctrl_c()
-        .await
-        .expect("Expect shutdown signal handler");
 }
 
 fn sonarr_url(path: &str) -> String {
@@ -123,7 +116,7 @@ struct EpisodeFile {
     #[serde(rename = "relativePath")]
     relative_path: String,
     path: String,
-    size: i32,
+    size: i64,
     #[serde(rename = "dateAdded")]
     date_added: String,
     // quality: Quality;
