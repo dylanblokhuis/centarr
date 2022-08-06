@@ -1,16 +1,25 @@
-use axum::{extract::Path, http::HeaderMap, response::IntoResponse, routing::get, Json, Router};
+use axum::{extract::Path, http::HeaderMap, routing::get, Json, Router};
 use errors::ApiError;
 
 use reqwest::RequestBuilder;
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::{net::SocketAddr, path::PathBuf};
+use tokio::select;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 mod errors;
+mod sendfile;
 
 #[tokio::main]
 async fn main() {
+    select! {
+        _ = app() => {},
+        _ = sendfile::server() => {},
+    }
+}
+
+async fn app() {
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::new(
             std::env::var("RUST_LOG").unwrap_or_else(|_| "centarr=debug,tower_http=debug".into()),
@@ -22,10 +31,6 @@ async fn main() {
         .route("/shows", get(get_shows))
         .route("/shows/:showId", get(get_show))
         .route("/shows/:showId/episodes/:episodeId", get(get_episode))
-        .route(
-            "/shows/:showId/episodes/:episodeId/watch",
-            get(get_episode_and_watch),
-        )
         .layer(TraceLayer::new_for_http());
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
@@ -126,6 +131,9 @@ struct EpisodeFile {
     quality_cutoff_not_met: bool,
     #[serde(rename = "sceneName")]
     scene_name: Option<String>,
+
+    #[serde(rename = "watchUrl")]
+    watch_url: Option<String>,
 }
 
 async fn get_shows() -> Result<Json<Vec<Show>>, ApiError> {
@@ -168,7 +176,10 @@ async fn get_show(Path(id): Path<i32>) -> Result<Json<Show>, ApiError> {
     return Ok(show.into());
 }
 
-async fn get_episode(Path(ids): Path<(i32, i32)>) -> Result<Json<Episode>, ApiError> {
+async fn get_episode(
+    Path(ids): Path<(i32, i32)>,
+    headers: HeaderMap,
+) -> Result<Json<Episode>, ApiError> {
     let body = sonarr_client(format!("/episode/{}?seriesId={}", ids.1, ids.0).as_str())
         .send()
         .await
@@ -177,40 +188,27 @@ async fn get_episode(Path(ids): Path<(i32, i32)>) -> Result<Json<Episode>, ApiEr
         .await
         .map_err(|e| ApiError::empty(500, Some(e.to_string())))?;
 
-    let episode = serde_json::from_str::<Episode>(&body).unwrap();
+    let mut episode = serde_json::from_str::<Episode>(&body).unwrap();
 
-    return Ok(Json(episode));
-}
-
-static CHUNK_SIZE: usize = 65536;
-
-async fn get_episode_and_watch(
-    Path(ids): Path<(i32, i32)>,
-    headers: HeaderMap,
-) -> Result<impl IntoResponse, ApiError> {
-    let body = sonarr_client(format!("/episode/{}?seriesId={}", ids.1, ids.0).as_str())
-        .send()
-        .await
-        .map_err(|e| ApiError::new(500, e.to_string()))?
-        .text()
-        .await
-        .map_err(|e| ApiError::new(500, e.to_string()))?;
-
-    let episode = serde_json::from_str::<Episode>(&body).unwrap();
-
-    if let Some(file) = episode.episode_file {
+    if let Some(mut file) = episode.episode_file {
         let mut path = PathBuf::from(file.path.clone());
 
         if let Ok(prefix) = env::var("SONARR_DISK_PATH_PREFIX") {
             path = PathBuf::from(prefix).join(format!(".{}", file.path));
         }
 
-        let file = hyper_static::serve::static_file(path.as_path(), None, &headers, CHUNK_SIZE);
-        return Ok(file
-            .await
-            .map_err(|e| ApiError::new(500, e.to_string()))?
-            .map_err(|e| ApiError::new(500, e.to_string()))?);
+        file.watch_url = Some(format!(
+            "http://{}?file={}",
+            headers
+                .get("Host")
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .replace("3000", "3001"),
+            urlencoding::encode(path.to_str().unwrap())
+        ));
+        episode.episode_file = Some(file);
     }
 
-    Err(ApiError::new(400, "Episode not found".into()))
+    return Ok(Json(episode));
 }
