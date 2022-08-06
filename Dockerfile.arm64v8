@@ -4,8 +4,8 @@ WORKDIR app
 
 COPY . .
 
-RUN cargo install --path .
+RUN cargo build --release
 
 EXPOSE 3000
 
-ENTRYPOINT ["centarr"]
+CMD ["/app/target/release/centarr"]
