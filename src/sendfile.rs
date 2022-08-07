@@ -96,7 +96,7 @@ pub async fn server() {
 
             // println!("start_index: {}, count: {}", start_index, read_amount);
 
-            println!("Starting transfer loop");
+            // println!("Starting transfer loop");
             loop {
                 let read_amount = end_index - start_index;
                 // let chunk_size = std::cmp::min(CHUNK_SIZE, end_index - start_index);
@@ -116,7 +116,7 @@ pub async fn server() {
                             println!("Stopping transfer");
                             break;
                         }
-                        println!("{} bytes sent", bytes);
+                        // println!("{} bytes sent", bytes);
                     }
                     Err(e) => {
                         if e != Errno::EAGAIN {
