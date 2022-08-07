@@ -1,8 +1,5 @@
 FROM lukemathwalker/cargo-chef:latest-rust-1.62 AS chef
 
-RUN apt-get install g++-aarch64-linux-gnu libc6-dev-arm64-cross
-RUN rustup target add aarch64-unknown-linux-gnu
-
 WORKDIR app
 
 FROM chef AS planner
