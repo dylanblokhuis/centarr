@@ -8,7 +8,7 @@ use regex::Regex;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
-static CHUNK_SIZE: u64 = 65536;
+// static CHUNK_SIZE: i64 = 4000;
 pub async fn server() {
     let addr = "0.0.0.0:3001".parse::<SocketAddr>().unwrap();
 
@@ -63,8 +63,6 @@ pub async fn server() {
                 end_index = metadata.len() as i64;
             }
 
-            let read_amount = end_index - start_index;
-
             socket
                 .write_all(&mut b"HTTP/1.1 206 Partial Content\r\n".as_slice())
                 .await
@@ -72,6 +70,7 @@ pub async fn server() {
 
             let mut headers = HeaderMap::new();
             headers.append("Accept-Ranges", HeaderValue::from_static("bytes"));
+
             headers.append(
                 "Content-Type",
                 HeaderValue::from_static("application/octet-stream"),
@@ -83,10 +82,10 @@ pub async fn server() {
                 )
                 .unwrap(),
             );
-            headers.append(
-                "Content-Length",
-                HeaderValue::from_str(read_amount.to_string().as_str()).unwrap(),
-            );
+            // headers.append(
+            //     "Content-Length",
+            //     HeaderValue::from_str(read_amount.to_string().as_str()).unwrap(),
+            // );
 
             for (name, value) in headers {
                 let bytes = format!("{}: {}\r\n", name.unwrap(), value.to_str().unwrap());
@@ -97,35 +96,39 @@ pub async fn server() {
 
             // println!("start_index: {}, count: {}", start_index, read_amount);
 
-            let mut bytes_read: usize = 0;
-            while bytes_read != read_amount as usize {
-                let chunk_size = std::cmp::min(CHUNK_SIZE, end_index as u64 - bytes_read as u64);
+            println!("Starting transfer loop");
+            loop {
+                let read_amount = end_index - start_index;
+                // let chunk_size = std::cmp::min(CHUNK_SIZE, end_index - start_index);
+                // println!(
+                //     "start_index: {} end_index: {} read_amount: {} bytes_read: {}",
+                //     start_index, end_index, read_amount, bytes_read
+                // );
 
-                // println!("start_index {}: chunk_size: {}", start_index, chunk_size);
                 match nix::sys::sendfile::sendfile(
                     socket.as_raw_fd(),
                     file.as_raw_fd(),
                     Some(&mut start_index),
-                    chunk_size as usize,
+                    read_amount as usize,
                 ) {
                     Ok(bytes) => {
                         if bytes == 0 {
-                            println!("Connection lost");
-                            return;
+                            println!("Stopping transfer");
+                            break;
                         }
-
-                        bytes_read += bytes;
+                        println!("{} bytes sent", bytes);
                     }
                     Err(e) => {
                         if e != Errno::EAGAIN {
                             println!("sendfile(2) error {:?}", e);
                             break;
                         }
+                        break;
 
-                        socket.writable().await.unwrap();
+                        // socket.writable().await.unwrap();
                         // socket.flush().await.unwrap();
-                        // println!("{:?}", res);
-                        // std::thread::sleep(std::time::Duration::from_millis(10));
+                        // println!("{:?}", e);
+                        // std::thread::sleep(std::time::Duration::from_millis(100));
                         // break;
                     }
                 }
