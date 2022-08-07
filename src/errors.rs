@@ -11,13 +11,13 @@ pub struct ApiError {
 }
 
 impl ApiError {
-    pub fn new(status_code: u16, message: String) -> Self {
-        Self {
-            status_code: StatusCode::from_u16(status_code)
-                .expect("Status Code used that doesn't exist"),
-            message: Some(message),
-        }
-    }
+    // pub fn new(status_code: u16, message: String) -> Self {
+    //     Self {
+    //         status_code: StatusCode::from_u16(status_code)
+    //             .expect("Status Code used that doesn't exist"),
+    //         message: Some(message),
+    //     }
+    // }
 
     pub fn empty(status_code: u16, log: Option<String>) -> Self {
         println!("{:?}", log);
