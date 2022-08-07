@@ -8,7 +8,7 @@ use regex::Regex;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
-// static CHUNK_SIZE: i64 = 4000;
+static CHUNK_SIZE: u64 = 65536;
 pub async fn server() {
     let addr = "0.0.0.0:3001".parse::<SocketAddr>().unwrap();
 
@@ -22,19 +22,17 @@ pub async fn server() {
             let mut buf = vec![0; 1024];
             socket.read(&mut buf).await.unwrap();
 
-            let mut headers = [httparse::EMPTY_HEADER; 16];
+            println!("{}", String::from_utf8_lossy(&buf));
+
+            let mut headers = [httparse::EMPTY_HEADER; 64];
             let mut req = httparse::Request::new(&mut headers);
             req.parse(&mut buf).unwrap();
 
-            let range = String::from_utf8(
-                req.headers
-                    .iter()
-                    .find(|h| h.name == "Range")
-                    .unwrap()
-                    .value
-                    .into(),
-            )
-            .unwrap();
+            let mut range = "bytes=0-".to_string();
+            let maybe_range_header = req.headers.iter().find(|h| h.name == "Range");
+            if let Some(range_header) = maybe_range_header {
+                range = String::from_utf8(range_header.value.into()).unwrap();
+            }
 
             let path_encoded = req.path.unwrap().replace("/?file=", "");
             let path_decoded = urlencoding::decode(path_encoded.as_str()).unwrap();
@@ -63,6 +61,8 @@ pub async fn server() {
                 end_index = metadata.len() as i64;
             }
 
+            let read_amount = end_index - start_index;
+
             socket
                 .write_all(&mut b"HTTP/1.1 206 Partial Content\r\n".as_slice())
                 .await
@@ -70,7 +70,6 @@ pub async fn server() {
 
             let mut headers = HeaderMap::new();
             headers.append("Accept-Ranges", HeaderValue::from_static("bytes"));
-
             headers.append(
                 "Content-Type",
                 HeaderValue::from_static("application/octet-stream"),
@@ -82,10 +81,10 @@ pub async fn server() {
                 )
                 .unwrap(),
             );
-            // headers.append(
-            //     "Content-Length",
-            //     HeaderValue::from_str(read_amount.to_string().as_str()).unwrap(),
-            // );
+            headers.append(
+                "Content-Length",
+                HeaderValue::from_str(read_amount.to_string().as_str()).unwrap(),
+            );
 
             for (name, value) in headers {
                 let bytes = format!("{}: {}\r\n", name.unwrap(), value.to_str().unwrap());
@@ -94,45 +93,33 @@ pub async fn server() {
 
             socket.write_all(b"\r\n").await.unwrap();
 
-            // println!("start_index: {}, count: {}", start_index, read_amount);
+            let mut bytes_read: usize = 0;
+            while bytes_read != read_amount as usize {
+                let chunk_size = std::cmp::min(CHUNK_SIZE, end_index as u64 - bytes_read as u64);
 
-            // println!("Starting transfer loop");
-            loop {
-                let read_amount = end_index - start_index;
-                // let chunk_size = std::cmp::min(CHUNK_SIZE, end_index - start_index);
-                // println!(
-                //     "start_index: {} end_index: {} read_amount: {} bytes_read: {}",
-                //     start_index, end_index, read_amount, bytes_read
-                // );
-
-                match nix::sys::sendfile::sendfile(
+                match nix::sys::sendfile::sendfile64(
                     socket.as_raw_fd(),
                     file.as_raw_fd(),
                     Some(&mut start_index),
-                    read_amount as usize,
+                    chunk_size as usize,
                 ) {
                     Ok(bytes) => {
                         if bytes == 0 {
-                            println!("Stopping transfer");
-                            break;
+                            println!("Connection lost");
+                            return;
                         }
-                        // println!("{} bytes sent", bytes);
+
+                        bytes_read += bytes;
                     }
                     Err(e) => {
                         if e != Errno::EAGAIN {
                             println!("sendfile(2) error {:?}", e);
                             break;
                         }
-                        break;
 
-                        // socket.writable().await.unwrap();
-                        // socket.flush().await.unwrap();
-                        // println!("{:?}", e);
-                        // std::thread::sleep(std::time::Duration::from_millis(100));
-                        // break;
+                        break;
                     }
                 }
-                // println!("bytes_sent: {}", bytes_read);
             }
         });
     }

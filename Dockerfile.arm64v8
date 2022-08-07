@@ -1,8 +1,0 @@
-FROM arm64v8/rust:1.62
-
-WORKDIR /usr/src/centarr
-COPY . .
-
-RUN cargo install --path .
-
-CMD ["centarr"]
