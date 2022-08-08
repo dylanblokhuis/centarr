@@ -20,13 +20,13 @@ pub async fn server() {
 
         tokio::spawn(async move {
             let mut buf = vec![0; 1024];
-            socket.read(&mut buf).await.unwrap();
+            socket.read_exact(&mut buf).await.unwrap();
 
             println!("{}", String::from_utf8_lossy(&buf));
 
             let mut headers = [httparse::EMPTY_HEADER; 64];
             let mut req = httparse::Request::new(&mut headers);
-            req.parse(&mut buf).unwrap();
+            req.parse(&buf).unwrap();
 
             let mut range = "bytes=0-".to_string();
             let maybe_range_header = req.headers.iter().find(|h| h.name == "Range");
@@ -42,22 +42,23 @@ pub async fn server() {
             let metadata = file.metadata().unwrap();
 
             let mut start_index;
-            let mut end_index: i64 = 0;
+            let mut end_index = metadata.len() as i64;
 
-            let captures = Regex::new(r"bytes=(\d+)-(\d+)?").unwrap().captures(range.as_str()).unwrap();
+            let captures = Regex::new(r"bytes=(\d+)-(\d+)?")
+                .unwrap()
+                .captures(range.as_str())
+                .unwrap();
             let start = captures.get(1).unwrap().as_str();
             start_index = start.parse::<i64>().unwrap();
 
             if let Some(end) = captures.get(2) {
                 end_index = end.as_str().parse::<i64>().unwrap();
-            } else {
-                end_index = metadata.len() as i64;
             }
 
             let read_amount = end_index - start_index;
 
             socket
-                .write_all(&mut b"HTTP/1.1 206 Partial Content\r\n".as_slice())
+                .write_all(b"HTTP/1.1 206 Partial Content\r\n".as_slice())
                 .await
                 .unwrap();
 
@@ -81,7 +82,7 @@ pub async fn server() {
 
             for (name, value) in headers {
                 let bytes = format!("{}: {}\r\n", name.unwrap(), value.to_str().unwrap());
-                socket.write_all(&mut bytes.as_bytes()).await.unwrap();
+                socket.write_all(bytes.as_bytes()).await.unwrap();
             }
 
             socket.write_all(b"\r\n").await.unwrap();

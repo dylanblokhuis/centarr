@@ -43,8 +43,7 @@ async fn app() {
 }
 
 fn sonarr_url(path: &str) -> String {
-    let url = format!("{}{}", env::var("SONARR_URL").unwrap(), path);
-    return url;
+    format!("{}{}", env::var("SONARR_URL").unwrap(), path)
 }
 
 fn sonarr_client(path: &str) -> RequestBuilder {
@@ -147,7 +146,7 @@ async fn get_shows() -> Result<Json<Vec<Show>>, ApiError> {
 
     let shows = serde_json::from_str::<Vec<Show>>(&body).unwrap();
 
-    return Ok(shows.into());
+    Ok(shows.into())
 }
 
 async fn get_show(Path(id): Path<i32>) -> Result<Json<Show>, ApiError> {
@@ -173,7 +172,7 @@ async fn get_show(Path(id): Path<i32>) -> Result<Json<Show>, ApiError> {
 
     show.episodes = Some(episodes);
 
-    return Ok(show.into());
+    Ok(show.into())
 }
 
 async fn get_episode(
@@ -210,5 +209,5 @@ async fn get_episode(
         episode.episode_file = Some(file);
     }
 
-    return Ok(Json(episode));
+    Ok(Json(episode))
 }
