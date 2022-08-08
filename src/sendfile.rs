@@ -44,20 +44,13 @@ pub async fn server() {
             let mut start_index;
             let mut end_index: i64 = 0;
 
-            let re = Regex::new(r"bytes=(\d+)-(\d+)?").unwrap();
-            let captures = re.captures(range.as_str()).unwrap();
+            let captures = Regex::new(r"bytes=(\d+)-(\d+)?").unwrap().captures(range.as_str()).unwrap();
             let start = captures.get(1).unwrap().as_str();
             start_index = start.parse::<i64>().unwrap();
 
             if let Some(end) = captures.get(2) {
                 end_index = end.as_str().parse::<i64>().unwrap();
-            }
-
-            if start_index == 0 && end_index == 0 {
-                end_index = metadata.len() as i64;
-            }
-
-            if start_index != 0 && end_index == 0 {
+            } else {
                 end_index = metadata.len() as i64;
             }
 
@@ -97,7 +90,7 @@ pub async fn server() {
             while bytes_read != read_amount as usize {
                 let chunk_size = std::cmp::min(CHUNK_SIZE, end_index as u64 - bytes_read as u64);
 
-                match nix::sys::sendfile::sendfile64(
+                match nix::sys::sendfile::sendfile(
                     socket.as_raw_fd(),
                     file.as_raw_fd(),
                     Some(&mut start_index),
