@@ -180,6 +180,8 @@ pub async fn server() {
                             println!("sendfile(2) error {:?}", e);
                             break;
                         }
+
+                        stream.writable().await.unwrap();
                     }
                 }
             }
