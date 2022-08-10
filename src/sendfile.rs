@@ -52,24 +52,28 @@ fn parse_request(buf: &[u8]) -> Option<Request<()>> {
 }
 
 async fn get_request_from_stream(socket: &mut TcpStream) -> Request<()> {
-    let req;
+    let mut req = None;
     let mut buf = vec![0; 1024];
     let mut writer = BufWriter::new(&mut buf);
 
-    loop {
-        let mut temp_buf = vec![0; 16];
+    for _ in 1..5 {
+        let mut temp_buf = vec![0; 1024];
         socket.read_buf(&mut temp_buf).await.unwrap();
         writer.write_all(&temp_buf).await.unwrap();
 
         let maybe_req = parse_request(writer.buffer());
 
         if let Some(inner) = maybe_req {
-            req = inner;
+            req = Some(inner);
             break;
         }
     }
 
-    req
+    if req.is_none() {
+        panic!("Could not parse request");
+    }
+
+    req.unwrap()
 }
 
 pub async fn server() {
