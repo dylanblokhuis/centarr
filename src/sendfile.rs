@@ -6,30 +6,70 @@ use axum::http::{HeaderMap, HeaderValue, Request};
 use nix::errno::Errno;
 use regex::Regex;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufWriter};
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpStream};
 
 static CHUNK_SIZE: i64 = 1_048_576;
 
 fn parse_request(buf: &[u8]) -> Option<Request<()>> {
-    let mut headers = [httparse::EMPTY_HEADER; 4];
-    let mut req = httparse::Request::new(&mut headers);
-    let status = req.parse(buf);
-
-    if status.is_err() {
-        return None;
-    }
-
-    if status.unwrap().is_partial() {
-        return None;
-    }
-
+    let string = String::from_utf8(buf.to_vec()).unwrap();
     let mut request = Request::builder();
-    for header in req.headers.iter() {
-        request = request.header(header.name, HeaderValue::from_bytes(header.value).unwrap());
+    let mut complete = false;
+
+    for raw_line in string.lines() {
+        let line = raw_line.replace('\0', "");
+
+        if line.contains("HTTP/1.1") {
+            let mut parts = line.split(' ');
+            let method = parts.next().unwrap();
+            let uri = parts.next().unwrap();
+
+            request = request.method(method).uri(uri);
+            continue;
+        }
+
+        if line.contains(':') {
+            let mut parts = line.split(':');
+            let key = parts.next().unwrap();
+            let value = parts.next().unwrap();
+
+            let maybe_valid_header = HeaderValue::from_str(value);
+            if let Ok(valid_header) = maybe_valid_header {
+                request = request.header(key, valid_header);
+            }
+            continue;
+        }
+
+        if line.is_empty() {
+            complete = true;
+        }
     }
-    request = request.uri(req.path.unwrap());
+
+    if !complete {
+        return None;
+    }
 
     Some(request.body(()).unwrap())
+}
+
+async fn get_request_from_stream(socket: &mut TcpStream) -> Request<()> {
+    let req;
+    let mut buf = vec![0; 1024];
+    let mut writer = BufWriter::new(&mut buf);
+
+    loop {
+        let mut temp_buf = vec![0; 16];
+        socket.read_buf(&mut temp_buf).await.unwrap();
+        writer.write_all(&temp_buf).await.unwrap();
+
+        let maybe_req = parse_request(writer.buffer());
+
+        if let Some(inner) = maybe_req {
+            req = inner;
+            break;
+        }
+    }
+
+    req
 }
 
 pub async fn server() {
@@ -39,32 +79,11 @@ pub async fn server() {
     println!("Listening on: {}", addr);
 
     loop {
-        let (mut socket, _) = listener.accept().await.unwrap();
+        let (mut stream, _) = listener.accept().await.unwrap();
 
         tokio::spawn(async move {
             // println!("{}", String::from_utf8_lossy(&buf));
-
-            let req;
-            let mut buf = vec![0; 4096];
-            let mut writer = BufWriter::new(&mut buf);
-
-            loop {
-                let mut temp_buf = vec![0; 16];
-                socket.read_buf(&mut temp_buf).await.unwrap();
-                writer.write_all(&temp_buf).await.unwrap();
-
-                println!("{}", String::from_utf8_lossy(writer.buffer()));
-
-                let maybe_req = parse_request(writer.buffer());
-                println!("{:?}", maybe_req);
-                if let Some(inner) = maybe_req {
-                    req = inner;
-                    break;
-                }
-            }
-
-            // req.parse(&buf).unwrap().is_partial();
-            // socket.read_buf(&mut buf).await.unwrap();
+            let req = get_request_from_stream(&mut stream).await;
 
             let mut range = "bytes=0-";
             let maybe_range_header = req
@@ -100,7 +119,7 @@ pub async fn server() {
                 end_index = end.as_str().parse::<i64>().unwrap();
             }
 
-            socket
+            stream
                 .write_all(b"HTTP/1.1 206 Partial Content\r\n".as_slice())
                 .await
                 .unwrap();
@@ -126,10 +145,10 @@ pub async fn server() {
 
             for (name, value) in headers {
                 let bytes = format!("{}: {}\r\n", name.unwrap(), value.to_str().unwrap());
-                socket.write_all(bytes.as_bytes()).await.unwrap();
+                stream.write_all(bytes.as_bytes()).await.unwrap();
             }
 
-            socket.write_all(b"\r\n").await.unwrap();
+            stream.write_all(b"\r\n").await.unwrap();
 
             println!("starting from {} to {}", start_index, end_index);
 
@@ -142,7 +161,7 @@ pub async fn server() {
                 }
 
                 match nix::sys::sendfile::sendfile(
-                    socket.as_raw_fd(),
+                    stream.as_raw_fd(),
                     file.as_raw_fd(),
                     Some(&mut start_index),
                     chunk_size as usize,
@@ -160,8 +179,8 @@ pub async fn server() {
             }
 
             let mut buffer = Vec::new();
-            socket.read_to_end(&mut buffer).await.unwrap();
-            println!("closing socket");
+            stream.read_to_end(&mut buffer).await.unwrap();
+            println!("closing stream");
         });
     }
 }
