@@ -155,11 +155,14 @@ pub async fn server() {
 
             println!("starting from {} to {}", start_index, end_index);
 
+            let mut completed = false;
             let mut bytes_read: i64 = 0;
             loop {
                 let chunk_size = std::cmp::min(CHUNK_SIZE, (end_index + 1) - bytes_read);
 
+                println!("chunk size: {}", chunk_size);
                 if chunk_size == 0 {
+                    completed = true;
                     break;
                 }
 
@@ -181,8 +184,12 @@ pub async fn server() {
                 }
             }
 
-            let mut buffer = Vec::new();
-            stream.read_to_end(&mut buffer).await.unwrap();
+            if completed {
+                println!("waiting for socket to end");
+                let mut buffer = Vec::new();
+                stream.read_to_end(&mut buffer).await.unwrap();
+            }
+
             println!("closing stream");
         });
     }
