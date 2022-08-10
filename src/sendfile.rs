@@ -28,7 +28,7 @@ fn parse_request(buf: &[u8]) -> Option<Request<()>> {
         }
 
         if line.contains(':') {
-            let mut parts = line.split(':');
+            let mut parts = line.split(": ");
             let key = parts.next().unwrap();
             let value = parts.next().unwrap();
 
@@ -82,14 +82,13 @@ pub async fn server() {
         let (mut stream, _) = listener.accept().await.unwrap();
 
         tokio::spawn(async move {
-            // println!("{}", String::from_utf8_lossy(&buf));
             let req = get_request_from_stream(&mut stream).await;
 
             let mut range = "bytes=0-";
             let maybe_range_header = req
                 .headers()
                 .iter()
-                .find(|(name, _)| name.as_str() == "Range");
+                .find(|(name, _)| name == &axum::http::header::RANGE);
             if let Some((_, value)) = maybe_range_header {
                 range = value.to_str().unwrap();
             }
