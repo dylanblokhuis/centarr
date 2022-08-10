@@ -173,6 +173,7 @@ name = "centarr"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "httpdate",
  "nix",
  "regex",
  "reqwest",

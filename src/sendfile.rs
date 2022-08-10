@@ -1,6 +1,7 @@
 use std::net::SocketAddr;
 use std::os::unix::prelude::AsRawFd;
 use std::path::PathBuf;
+use std::time::{Duration, SystemTime};
 
 use axum::http::{HeaderMap, HeaderValue, Request};
 use nix::errno::Errno;
@@ -128,6 +129,11 @@ pub async fn server() {
                 .unwrap();
 
             let mut headers = HeaderMap::new();
+            headers.append("Server", HeaderValue::from_static("centarr"));
+            headers.append(
+                "Date",
+                HeaderValue::from_str(httpdate::fmt_http_date(SystemTime::now()).as_str()).unwrap(),
+            );
             headers.append("Accept-Ranges", HeaderValue::from_static("bytes"));
             headers.append(
                 "Content-Type",
@@ -157,10 +163,12 @@ pub async fn server() {
 
             let mut completed = false;
             let mut bytes_read: i64 = 0;
+
+            let max_eagain = 100;
+            let mut current_eagain = 0;
             loop {
                 let chunk_size = std::cmp::min(CHUNK_SIZE, (end_index + 1) - bytes_read);
 
-                println!("chunk size: {}", chunk_size);
                 if chunk_size == 0 {
                     completed = true;
                     break;
@@ -174,6 +182,7 @@ pub async fn server() {
                 ) {
                     Ok(bytes) => {
                         bytes_read += bytes as i64;
+                        current_eagain = 0;
                     }
                     Err(e) => {
                         if e != Errno::EAGAIN {
@@ -181,7 +190,14 @@ pub async fn server() {
                             break;
                         }
 
-                        stream.writable().await.unwrap();
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+
+                        println!("eagain");
+                        current_eagain += 1;
+                        if current_eagain == max_eagain {
+                            println!("max eagain treshold reached");
+                            break;
+                        }
                     }
                 }
             }
