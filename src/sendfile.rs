@@ -147,10 +147,7 @@ pub async fn process(stream: &mut TcpStream, addr: SocketAddr) {
         HeaderValue::from_str(httpdate::fmt_http_date(SystemTime::now()).as_str()).unwrap(),
     );
     headers.append("Accept-Ranges", HeaderValue::from_static("bytes"));
-    headers.append(
-        "Content-Type",
-        HeaderValue::from_static("application/octet-stream"),
-    );
+    headers.append("Content-Type", HeaderValue::from_static("video/webm"));
     headers.append(
         "Content-Range",
         HeaderValue::from_str(
