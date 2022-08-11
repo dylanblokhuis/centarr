@@ -62,4 +62,5 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: ghcr.io/dylanblokhuis/centarr:master
-          cache-from: ghcr.io/dylanblokhuis/centarr:master
+          cache-from: type=registry,ref=ghcr.io/dylanblokhuis/centarr:master
+          cache-to: type=inline
