@@ -122,7 +122,7 @@ pub async fn process(stream: &mut TcpStream, addr: SocketAddr) {
     println!("{:?} Opened file {:?}", addr, filename);
     let metadata = file.metadata().await.unwrap();
     let mut start_index;
-    let mut end_index = metadata.len() as i64 - 1;
+    let mut end_index = metadata.len() as i64;
 
     let captures = Regex::new(r"bytes=(\d+)-(\d+)?")
         .unwrap()
@@ -178,20 +178,15 @@ pub async fn process(stream: &mut TcpStream, addr: SocketAddr) {
     println!("{:?} Starting from {} to {}", addr, start_index, end_index);
 
     let mut completed = false;
-    let mut bytes_read: i64 = 0;
+    let mut bytes_read: i64 = start_index;
     let stream_fd = stream.as_raw_fd();
     let file_fd = file.as_raw_fd();
 
     loop {
-        start_index = bytes_read;
+        let mut offset = start_index;
         let chunk_size = std::cmp::min(CHUNK_SIZE, end_index - bytes_read);
         let result = tokio::spawn(async move {
-            nix::sys::sendfile::sendfile(
-                stream_fd,
-                file_fd,
-                Some(&mut start_index),
-                chunk_size as usize,
-            )
+            nix::sys::sendfile::sendfile(stream_fd, file_fd, Some(&mut offset), chunk_size as usize)
         });
 
         let res = result.await.unwrap();
@@ -204,6 +199,7 @@ pub async fn process(stream: &mut TcpStream, addr: SocketAddr) {
                 break;
             }
             bytes_read += bytes as i64;
+            start_index = bytes_read
         }
 
         if let Err(e) = res {
