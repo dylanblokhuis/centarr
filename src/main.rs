@@ -13,13 +13,6 @@ mod sendfile;
 
 #[tokio::main]
 async fn main() {
-    select! {
-        _ = app() => {},
-        _ = sendfile::server() => {},
-    }
-}
-
-async fn app() {
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::new(
             std::env::var("RUST_LOG").unwrap_or_else(|_| "centarr=debug,tower_http=debug".into()),
@@ -27,14 +20,20 @@ async fn app() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
+    select! {
+        _ = app() => {},
+        _ = sendfile::server() => {},
+    }
+}
+
+async fn app() {
     let app: _ = Router::new()
         .route("/shows", get(get_shows))
         .route("/shows/:showId", get(get_show))
-        .route("/shows/:showId/episodes/:episodeId", get(get_episode))
         .layer(TraceLayer::new_for_http());
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
-    tracing::debug!("listening on http://{}", addr);
+    tracing::debug!("Listening on http://{}", addr);
 
     axum::Server::bind(&addr)
         .serve(app.into_make_service())
@@ -149,7 +148,7 @@ async fn get_shows() -> Result<Json<Vec<Show>>, ApiError> {
     Ok(shows.into())
 }
 
-async fn get_show(Path(id): Path<i32>) -> Result<Json<Show>, ApiError> {
+async fn get_show(Path(id): Path<i32>, headers: HeaderMap) -> Result<Json<Show>, ApiError> {
     let body = sonarr_client(format!("/series/{}", id).as_str())
         .send()
         .await
@@ -168,46 +167,63 @@ async fn get_show(Path(id): Path<i32>) -> Result<Json<Show>, ApiError> {
         .await
         .map_err(|e| ApiError::empty(500, Some(e.to_string())))?;
 
-    let episodes = serde_json::from_str::<Vec<Episode>>(&body).unwrap();
+    let mut episodes = serde_json::from_str::<Vec<Episode>>(&body).unwrap();
+
+    for episode in &mut episodes {
+        if episode.episode_file.is_some() {
+            let mut file = episode.episode_file.as_mut().unwrap();
+            let path = PathBuf::from(file.path.clone());
+            file.watch_url = Some(format!(
+                "http://{}?file={}",
+                headers
+                    .get("Host")
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .replace("3000", "3001"),
+                urlencoding::encode(path.to_str().unwrap())
+            ));
+        }
+    }
 
     show.episodes = Some(episodes);
 
     Ok(show.into())
 }
 
-async fn get_episode(
-    Path(ids): Path<(i32, i32)>,
-    headers: HeaderMap,
-) -> Result<Json<Episode>, ApiError> {
-    let body = sonarr_client(format!("/episode/{}?seriesId={}", ids.1, ids.0).as_str())
-        .send()
-        .await
-        .map_err(|e| ApiError::empty(500, Some(e.to_string())))?
-        .text()
-        .await
-        .map_err(|e| ApiError::empty(500, Some(e.to_string())))?;
+// async fn get_episode(
+//     Path(ids): Path<(i32, i32)>,
+//     headers: HeaderMap,
+// ) -> Result<Json<Episode>, ApiError> {
+//     let body = sonarr_client(format!("/episode/{}?seriesId={}", ids.1, ids.0).as_str())
+//         .send()
+//         .await
+//         .map_err(|e| ApiError::empty(500, Some(e.to_string())))?
+//         .text()
+//         .await
+//         .map_err(|e| ApiError::empty(500, Some(e.to_string())))?;
 
-    let mut episode = serde_json::from_str::<Episode>(&body).unwrap();
+//     let mut episode = serde_json::from_str::<Episode>(&body).unwrap();
 
-    if let Some(mut file) = episode.episode_file {
-        let mut path = PathBuf::from(file.path.clone());
+//     if let Some(mut file) = episode.episode_file {
+//         let mut path = PathBuf::from(file.path.clone());
 
-        if let Ok(prefix) = env::var("SONARR_DISK_PATH_PREFIX") {
-            path = PathBuf::from(prefix).join(format!(".{}", file.path));
-        }
+//         if let Ok(prefix) = env::var("SONARR_DISK_PATH_PREFIX") {
+//             path = PathBuf::from(prefix).join(format!(".{}", file.path));
+//         }
 
-        file.watch_url = Some(format!(
-            "http://{}?file={}",
-            headers
-                .get("Host")
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .replace("3000", "3001"),
-            urlencoding::encode(path.to_str().unwrap())
-        ));
-        episode.episode_file = Some(file);
-    }
+//         file.watch_url = Some(format!(
+//             "http://{}?file={}",
+//             headers
+//                 .get("Host")
+//                 .unwrap()
+//                 .to_str()
+//                 .unwrap()
+//                 .replace("3000", "3001"),
+//             urlencoding::encode(path.to_str().unwrap())
+//         ));
+//         episode.episode_file = Some(file);
+//     }
 
-    Ok(Json(episode))
-}
+//     Ok(Json(episode))
+// }

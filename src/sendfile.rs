@@ -81,7 +81,7 @@ pub async fn server() {
     let addr = "0.0.0.0:3001".parse::<SocketAddr>().unwrap();
 
     let listener = TcpListener::bind(&addr).await.unwrap();
-    println!("Listening on: {}", addr);
+    tracing::debug!("Listening on: http://{}", addr);
 
     loop {
         let (mut stream, addr) = listener.accept().await.unwrap();
@@ -94,7 +94,7 @@ pub async fn server() {
 
 pub async fn process(stream: &mut TcpStream, addr: SocketAddr) {
     let req = get_request_from_stream(stream).await;
-    println!("{:?} Parsed request", addr);
+    tracing::debug!("{:?} Parsed request", addr);
 
     let mut range = "bytes=0-";
     let maybe_range_header = req
@@ -105,13 +105,13 @@ pub async fn process(stream: &mut TcpStream, addr: SocketAddr) {
         range = value.to_str().unwrap();
     }
 
-    println!("{:?} Has range: {:?}", addr, range);
+    tracing::debug!("{:?} Has range: {:?}", addr, range);
 
     let path_encoded = req.uri().to_string().replace("/?file=", "");
     let path_decoded = urlencoding::decode(path_encoded.as_str()).unwrap();
     let filename = PathBuf::from(path_decoded.to_string());
 
-    println!("{:?} Opening file: {:?}", addr, filename);
+    tracing::debug!("{:?} Opening file: {:?}", addr, filename);
 
     let file = tokio::fs::OpenOptions::new()
         .read(true)
@@ -119,7 +119,7 @@ pub async fn process(stream: &mut TcpStream, addr: SocketAddr) {
         .open(&filename)
         .await
         .unwrap();
-    println!("{:?} Opened file {:?}", addr, filename);
+    tracing::debug!("{:?} Opened file {:?}", addr, filename);
     let metadata = file.metadata().await.unwrap();
     let mut start_index;
     let mut end_index = metadata.len() as i64;
@@ -175,7 +175,7 @@ pub async fn process(stream: &mut TcpStream, addr: SocketAddr) {
 
     stream.write_all(b"\r\n").await.unwrap();
 
-    println!("{:?} Starting from {} to {}", addr, start_index, end_index);
+    tracing::debug!("{:?} Starting from {} to {}", addr, start_index, end_index);
 
     let mut completed = false;
     let mut bytes_read: i64 = start_index;
@@ -191,8 +191,8 @@ pub async fn process(stream: &mut TcpStream, addr: SocketAddr) {
 
         let res = result.await.unwrap();
         if let Ok(bytes) = res {
-            println!("{:?} Start index: {}", addr, start_index);
-            println!("{:?} Read bytes: {}", addr, bytes);
+            tracing::debug!("{:?} Start index: {}", addr, start_index);
+            tracing::debug!("{:?} Read bytes: {}", addr, bytes);
 
             if bytes == 0 {
                 completed = true;
@@ -203,7 +203,7 @@ pub async fn process(stream: &mut TcpStream, addr: SocketAddr) {
         }
 
         if let Err(e) = res {
-            // println!("{:?} Error: {:?}", addr, e);
+            // tracing::debug!("{:?} Error: {:?}", addr, e);
             if e != Errno::EAGAIN {
                 break;
             }
@@ -211,11 +211,11 @@ pub async fn process(stream: &mut TcpStream, addr: SocketAddr) {
     }
 
     if completed {
-        println!("{:?} waiting for socket to end", addr);
+        tracing::debug!("{:?} waiting for socket to end", addr);
         let mut buffer = Vec::new();
         stream.read_to_end(&mut buffer).await.unwrap();
     }
 
     stream.flush().await.unwrap();
-    println!("{:?} Closing stream", addr);
+    tracing::debug!("{:?} Closing stream", addr);
 }
