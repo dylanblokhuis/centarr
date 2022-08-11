@@ -158,8 +158,10 @@ pub async fn process(stream: &mut TcpStream, addr: SocketAddr) {
         )
         .unwrap(),
     );
-    if let Some(header) = req.headers().get("Connection") && header.to_str().unwrap() == "keep-alive" {
-        headers.append("Connection", HeaderValue::from_static("close"));
+    if let Some(header) = req.headers().get("Connection") {
+        if header.to_str().unwrap().to_lowercase() == "keep-alive" {
+            headers.append("Connection", HeaderValue::from_static("close"));
+        }
     }
     headers.append(
         "Content-Length",
