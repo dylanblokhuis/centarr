@@ -208,7 +208,6 @@ pub async fn process(stream: &mut TcpStream, addr: SocketAddr) {
 
         if let Err(e) = res {
             // println!("{:?} Error: {:?}", addr, e);
-
             if e != Errno::EAGAIN {
                 break;
             }
