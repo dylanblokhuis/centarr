@@ -52,7 +52,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Build and push Docker image with Buildx (don't push on PR)
       # https://github.com/docker/build-push-action
       - name: Build and push Docker image
         id: build-and-push
@@ -62,5 +61,5 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: ghcr.io/dylanblokhuis/centarr:master
-          cache-from: type=registry,ref=ghcr.io/dylanblokhuis/centarr:master
-          cache-to: type=inline
+          cache-from: type=registry,ref=ghcr.io/dylanblokhuis/centarr:build-cache
+          cache-to: type=registry,ref=ghcr.io/dylanblokhuis/centarr:build-cache,mode=max
