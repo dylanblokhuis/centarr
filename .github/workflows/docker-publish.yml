@@ -46,7 +46,6 @@ jobs:
       # Login against a Docker registry except on PR
       # https://github.com/docker/login-action
       - name: Log into registry ${{ env.REGISTRY }}
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@v2
         with:
           registry: ${{ env.REGISTRY }}
@@ -62,5 +61,5 @@ jobs:
           context: .
           platforms: linux/amd64
           push: true
-          tags: dylanblokhuis/centarr:master
-          cache-from: dylanblokhuis/centarr:master
+          tags: ghcr.io/dylanblokhuis/centarr:master
+          cache-from: ghcr.io/dylanblokhuis/centarr:master
