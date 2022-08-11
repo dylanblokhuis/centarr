@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 use std::os::unix::prelude::AsRawFd;
 use std::path::PathBuf;
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
 use axum::http::{HeaderMap, HeaderValue, Request};
 use nix::errno::Errno;
@@ -84,131 +84,141 @@ pub async fn server() {
     println!("Listening on: {}", addr);
 
     loop {
-        let (mut stream, _) = listener.accept().await.unwrap();
+        let (mut stream, addr) = listener.accept().await.unwrap();
 
         tokio::spawn(async move {
-            let req = get_request_from_stream(&mut stream).await;
-
-            let mut range = "bytes=0-";
-            let maybe_range_header = req
-                .headers()
-                .iter()
-                .find(|(name, _)| name == &axum::http::header::RANGE);
-            if let Some((_, value)) = maybe_range_header {
-                range = value.to_str().unwrap();
-            }
-
-            let path_encoded = req.uri().to_string().replace("/?file=", "");
-            let path_decoded = urlencoding::decode(path_encoded.as_str()).unwrap();
-            let filename = PathBuf::from(path_decoded.to_string());
-
-            let file = tokio::fs::OpenOptions::new()
-                .read(true)
-                .write(false)
-                .open(&filename)
-                .await
-                .unwrap();
-            let metadata = file.metadata().await.unwrap();
-            let mut start_index;
-            let mut end_index = metadata.len() as i64 - 1;
-
-            let captures = Regex::new(r"bytes=(\d+)-(\d+)?")
-                .unwrap()
-                .captures(range)
-                .unwrap();
-            let start = captures.get(1).unwrap().as_str();
-            start_index = start.parse::<i64>().unwrap();
-
-            if let Some(end) = captures.get(2) {
-                end_index = end.as_str().parse::<i64>().unwrap();
-            }
-
-            stream
-                .write_all(b"HTTP/1.1 206 Partial Content\r\n".as_slice())
-                .await
-                .unwrap();
-
-            let mut headers = HeaderMap::new();
-            headers.append("Server", HeaderValue::from_static("centarr"));
-            headers.append(
-                "Date",
-                HeaderValue::from_str(httpdate::fmt_http_date(SystemTime::now()).as_str()).unwrap(),
-            );
-            headers.append("Accept-Ranges", HeaderValue::from_static("bytes"));
-            headers.append(
-                "Content-Type",
-                HeaderValue::from_static("application/octet-stream"),
-            );
-            headers.append(
-                "Content-Range",
-                HeaderValue::from_str(
-                    format!("bytes {}-{}/{}", start_index, end_index, metadata.len()).as_str(),
-                )
-                .unwrap(),
-            );
-            headers.append("Connection", HeaderValue::from_static("close"));
-            headers.append(
-                "Content-Length",
-                HeaderValue::from_str((end_index - start_index + 1).to_string().as_str()).unwrap(),
-            );
-
-            for (name, value) in headers {
-                let bytes = format!("{}: {}\r\n", name.unwrap(), value.to_str().unwrap());
-                stream.write_all(bytes.as_bytes()).await.unwrap();
-            }
-
-            stream.write_all(b"\r\n").await.unwrap();
-
-            println!("starting from {} to {}", start_index, end_index);
-
-            let mut completed = false;
-            let mut bytes_read: i64 = 0;
-
-            let max_eagain = 100;
-            let mut current_eagain = 0;
-            loop {
-                let chunk_size = std::cmp::min(CHUNK_SIZE, (end_index + 1) - bytes_read);
-
-                if chunk_size == 0 {
-                    completed = true;
-                    break;
-                }
-
-                match nix::sys::sendfile::sendfile(
-                    stream.as_raw_fd(),
-                    file.as_raw_fd(),
-                    Some(&mut start_index),
-                    chunk_size as usize,
-                ) {
-                    Ok(bytes) => {
-                        bytes_read += bytes as i64;
-                        current_eagain = 0;
-                    }
-                    Err(e) => {
-                        if e != Errno::EAGAIN {
-                            println!("sendfile(2) error {:?}", e);
-                            break;
-                        }
-
-                        tokio::time::sleep(Duration::from_millis(10)).await;
-
-                        println!("eagain");
-                        current_eagain += 1;
-                        if current_eagain == max_eagain {
-                            println!("max eagain treshold reached");
-                            break;
-                        }
-                    }
-                }
-            }
-
-            if completed {
-                println!("waiting for socket to end");
-                let mut buffer = Vec::new();
-                stream.read_to_end(&mut buffer).await.unwrap();
-            }
-
-            println!("closing stream");
+            process(&mut stream, addr).await;
         });
     }
+}
+
+pub async fn process(stream: &mut TcpStream, addr: SocketAddr) {
+    let req = get_request_from_stream(stream).await;
+    println!("{:?} Parsed request", addr);
+
+    let mut range = "bytes=0-";
+    let maybe_range_header = req
+        .headers()
+        .iter()
+        .find(|(name, _)| name == &axum::http::header::RANGE);
+    if let Some((_, value)) = maybe_range_header {
+        range = value.to_str().unwrap();
+    }
+
+    println!("{:?} Has range: {:?}", addr, range);
+
+    let path_encoded = req.uri().to_string().replace("/?file=", "");
+    let path_decoded = urlencoding::decode(path_encoded.as_str()).unwrap();
+    let filename = PathBuf::from(path_decoded.to_string());
+
+    println!("{:?} Opening file: {:?}", addr, filename);
+
+    let file = tokio::fs::OpenOptions::new()
+        .read(true)
+        .write(false)
+        .open(&filename)
+        .await
+        .unwrap();
+    println!("{:?} Opened file {:?}", addr, filename);
+    let metadata = file.metadata().await.unwrap();
+    let mut start_index;
+    let mut end_index = metadata.len() as i64 - 1;
+
+    let captures = Regex::new(r"bytes=(\d+)-(\d+)?")
+        .unwrap()
+        .captures(range)
+        .unwrap();
+    let start = captures.get(1).unwrap().as_str();
+    start_index = start.parse::<i64>().unwrap();
+
+    if let Some(end) = captures.get(2) {
+        end_index = end.as_str().parse::<i64>().unwrap();
+    }
+
+    stream
+        .write_all(b"HTTP/1.1 206 Partial Content\r\n".as_slice())
+        .await
+        .unwrap();
+
+    let mut headers = HeaderMap::new();
+    headers.append("Server", HeaderValue::from_static("centarr"));
+    headers.append(
+        "Date",
+        HeaderValue::from_str(httpdate::fmt_http_date(SystemTime::now()).as_str()).unwrap(),
+    );
+    headers.append("Accept-Ranges", HeaderValue::from_static("bytes"));
+    headers.append(
+        "Content-Type",
+        HeaderValue::from_static("application/octet-stream"),
+    );
+    headers.append(
+        "Content-Range",
+        HeaderValue::from_str(
+            format!("bytes {}-{}/{}", start_index, end_index, metadata.len()).as_str(),
+        )
+        .unwrap(),
+    );
+    if let Some(header) = req.headers().get("Connection") && header.to_str().unwrap() == "keep-alive" {
+        headers.append("Connection", HeaderValue::from_static("close"));
+    }
+    headers.append(
+        "Content-Length",
+        HeaderValue::from_str((end_index - start_index).to_string().as_str()).unwrap(),
+    );
+
+    for (name, value) in headers {
+        let bytes = format!("{}: {}\r\n", name.unwrap(), value.to_str().unwrap());
+        stream.write_all(bytes.as_bytes()).await.unwrap();
+    }
+
+    stream.write_all(b"\r\n").await.unwrap();
+
+    println!("{:?} Starting from {} to {}", addr, start_index, end_index);
+
+    let mut completed = false;
+    let mut bytes_read: i64 = 0;
+    let stream_fd = stream.as_raw_fd();
+    let file_fd = file.as_raw_fd();
+
+    loop {
+        start_index = bytes_read;
+        let chunk_size = std::cmp::min(CHUNK_SIZE, end_index - bytes_read);
+        let result = tokio::spawn(async move {
+            nix::sys::sendfile::sendfile(
+                stream_fd,
+                file_fd,
+                Some(&mut start_index),
+                chunk_size as usize,
+            )
+        });
+
+        let res = result.await.unwrap();
+        if let Ok(bytes) = res {
+            println!("{:?} Start index: {}", addr, start_index);
+            println!("{:?} Read bytes: {}", addr, bytes);
+
+            if bytes == 0 {
+                completed = true;
+                break;
+            }
+            bytes_read += bytes as i64;
+        }
+
+        if let Err(e) = res {
+            // println!("{:?} Error: {:?}", addr, e);
+
+            if e != Errno::EAGAIN {
+                break;
+            }
+        }
+    }
+
+    if completed {
+        println!("{:?} waiting for socket to end", addr);
+        let mut buffer = Vec::new();
+        stream.read_to_end(&mut buffer).await.unwrap();
+    }
+
+    stream.flush().await.unwrap();
+    println!("{:?} Closing stream", addr);
 }
